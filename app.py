@@ -37,9 +37,9 @@ def safe_int_input(prompt):
 def find_item(title):
     with conn:
         cur = conn.cursor()
-        # Updated query to join with Author table through Item_Author junction table
+        # Updated query to include ReferenceOnly status
         cur.execute("""
-            SELECT i.ItemID, i.Title, i.BorrowingStatus, i.Location, GROUP_CONCAT(a.FirstName || ' ' || a.LastName) as Authors
+            SELECT i.ItemID, i.Title, i.BorrowingStatus, i.Location, GROUP_CONCAT(a.FirstName || ' ' || a.LastName) as Authors, i.ReferenceOnly
             FROM Item i
             LEFT JOIN Item_Author ia ON i.ItemID = ia.ItemID
             LEFT JOIN Author a ON ia.AuthorID = a.AuthorID
@@ -52,10 +52,11 @@ def find_item(title):
                 print(f"ID: {item[0]}, Title: {item[1]}, Status: {item[2]}, Location: {item[3]}")
                 if item[4]:  # Check if there are any authors
                     print(f"Author(s): {item[4]}")
+                if item[5]:  # Check if it's reference-only
+                    print("** REFERENCE ONLY - Not available for borrowing **")
                 print("-" * 40)
         else:
             print("No items found with that title.")
-
 # Function to borrow an item
 def borrow_item(member_id, item_id):
     try:
@@ -78,14 +79,19 @@ def borrow_item(member_id, item_id):
             if fine_record and fine_record[0] > 0:
                 return handle_input_error(f"Member {member_id} has an outstanding fine of ${fine_record[0]:.2f} and cannot borrow items until it is paid")
             
-            # Check if the item exists and is available
-            cur.execute("SELECT BorrowingStatus FROM Item WHERE ItemID = ?", (item_id,))
-            status = cur.fetchone()
+            # Check if the item exists, is available, and is not reference-only
+            cur.execute("SELECT BorrowingStatus, ReferenceOnly FROM Item WHERE ItemID = ?", (item_id,))
+            item_info = cur.fetchone()
             
-            if not status:
+            if not item_info:
                 return handle_input_error(f"Item with ID {item_id} not found")
                 
-            if status[0] == 'Borrowed':
+            status, reference_only = item_info
+            
+            if reference_only:
+                return handle_input_error(f"Item {item_id} is reference-only and cannot be borrowed")
+                
+            if status == 'Borrowed':
                 return handle_input_error(f"Item {item_id} is already borrowed by another member")
             
             # Proceed with borrowing
@@ -136,11 +142,25 @@ def return_item(borrowing_id):
     except sqlite3.Error as e:
         handle_critical_error(f"Database error while returning item: {e}")
 
-# Function to donate an item
-def donate_item(member_id, title, type, genre=None, publication_date=None, location=None, isbn=None):
+def donate_item(member_id, title, type, genre=None, publication_date=None, location=None, isbn=None, reference_only=False):
+    """Donate an item with error handling"""
     try:
         with conn:
             cur = conn.cursor()
+            
+            # Check if member exists and is active
+            cur.execute("SELECT Status FROM Member WHERE MemberID = ?", (member_id,))
+            member_status = cur.fetchone()
+            
+            if not member_status:
+                return handle_input_error(f"Member with ID {member_id} not found")
+                
+            if member_status[0] != 'Active':
+                return handle_input_error(f"Member {member_id} is inactive and cannot donate items")
+            
+            # Validate title
+            if not title or len(title.strip()) == 0:
+                return handle_input_error("Title cannot be empty")
             
             # Validate item type
             valid_types = ('Print Book', 'Online Book', 'Magazine', 'Journal', 'CD', 'Record')
@@ -148,17 +168,11 @@ def donate_item(member_id, title, type, genre=None, publication_date=None, locat
                 valid_types_str = ", ".join(f"'{t}'" for t in valid_types)
                 return handle_input_error(f"Invalid item type. Type must be one of: {valid_types_str}")
             
-            # Check if ISBN already exists
-            if isbn:
-                cur.execute("SELECT COUNT(*) FROM Item WHERE ISBN = ?", (isbn,))
-                if cur.fetchone()[0] > 0:
-                    return handle_input_error("An item with this ISBN already exists")
-            
-            # Insert the item
+            # Insert the item with reference_only flag
             cur.execute("""
-                INSERT INTO Item (Title, Type, Genre, PublicationDate, Location, ISBN) 
-                VALUES (?, ?, ?, ?, ?, ?)
-                """, (title, type, genre, publication_date, location, isbn))
+                INSERT INTO Item (Title, Type, Genre, PublicationDate, Location, ISBN, ReferenceOnly) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (title, type, genre, publication_date, location, isbn, 1 if reference_only else 0))
                 
             item_id = cur.lastrowid
             donation_date = datetime.now().strftime('%Y-%m-%d')
@@ -167,14 +181,20 @@ def donate_item(member_id, title, type, genre=None, publication_date=None, locat
                         (member_id, item_id, donation_date))
                         
             print(f"\nSUCCESS: Item '{title}' donated successfully. Pending approval.")
+            if reference_only:
+                print("NOTE: This item is marked as reference-only and will not be available for borrowing.")
             return True
             
     except sqlite3.IntegrityError as e:
         error_msg = str(e)
         if 'CHECK constraint failed' in error_msg:
             return handle_input_error(f"Invalid item information: {error_msg}")
-        elif 'UNIQUE constraint failed' in error_msg:
-            return handle_input_error(f"This item already exists: {error_msg}")
+        elif 'UNIQUE constraint failed' in error_msg and 'ISBN' in error_msg:
+            # Item with same ISBN already exists but we're allowing it
+            # Instead of an error, we'll just notify the user
+            print(f"\nNOTICE: An item with ISBN {isbn} already exists in our system.")
+            print("Your donation has been recorded with this ISBN.")
+            return True
         else:
             return handle_input_error(f"Problem donating the item: {error_msg}")
     except sqlite3.Error as e:
@@ -525,6 +545,7 @@ def member_menu(member_id):
             if borrowing_id is not None:
                 return_item(borrowing_id)
         
+        # In the member_menu function, update the donation section (choice '4')
         elif choice == '4':
             title = input("Enter the title of the item to donate: ")
             if not title.strip():
@@ -533,7 +554,11 @@ def member_menu(member_id):
                 
             print("\nValid item types: Print Book, Online Book, Magazine, Journal, CD, Record")
             type = input("Enter the type: ")
-            donate_item(member_id, title, type)
+            
+            reference_only_input = input("Is this item reference-only (not borrowable)? (yes/no): ").lower()
+            reference_only = reference_only_input == 'yes'
+            
+            donate_item(member_id, title, type, reference_only=reference_only)
         
         elif choice == '5':
             event_name = input("Enter the event name to search: ")
