@@ -202,6 +202,45 @@ def donate_item(member_id, title, type, genre=None, publication_date=None, locat
     except sqlite3.Error as e:
         handle_critical_error(f"Database error while donating item: {e}")
 
+
+def cancel_event_registration(member_id, event_id):
+    try:
+        with conn:
+            cur = conn.cursor()
+            
+            # Check if event exists
+            cur.execute("SELECT Name, Date FROM Event WHERE EventID = ?", (event_id,))
+            event_info = cur.fetchone()
+            if not event_info:
+                return handle_input_error(f"Event with ID {event_id} not found")
+                
+            event_name, event_date = event_info
+            
+            # Check if event date is in the past
+            event_datetime = datetime.strptime(event_date, '%Y-%m-%d')
+            if event_datetime < datetime.now():
+                return handle_input_error(f"Cannot cancel registration for event '{event_name}' as it has already occurred")
+            
+            # Check if member is registered for this event
+            cur.execute("SELECT COUNT(*) FROM Event_Member WHERE EventID = ? AND MemberID = ?", (event_id, member_id))
+            if cur.fetchone()[0] == 0:
+                return handle_input_error(f"You are not registered for event '{event_name}'")
+            
+            # Cancel the registration
+            cur.execute("DELETE FROM Event_Member WHERE EventID = ? AND MemberID = ?", (event_id, member_id))
+            
+            if cur.rowcount > 0:
+                # Update the current attendees count
+                cur.execute("UPDATE Event SET CurrentAttendees = CurrentAttendees - 1 WHERE EventID = ?", (event_id,))
+                
+                print(f"\nSUCCESS: Cancelled registration for Event '{event_name}'.")
+                return True
+            else:
+                return handle_input_error(f"Failed to cancel registration for event '{event_name}'")
+            
+    except sqlite3.Error as e:
+        handle_critical_error(f"Database error while cancelling event registration: {e}")
+
 # Function to find an event
 def find_event(event_name):
     with conn:
@@ -557,9 +596,10 @@ def member_menu(member_id):
         print("8. Ask for help from a librarian")
         print("9. View your fines")
         print("10. Pay fines")
-        print("11. Exit to Main Menu")
+        print("11. Cancel event registration")
+        print("12. Exit to Main Menu")
         
-        choice = input("Enter your choice (1-11): ")
+        choice = input("Enter your choice (1-12): ")
         
         if choice == '1':
             title = input("Enter the title to search: ")
@@ -606,14 +646,7 @@ def member_menu(member_id):
         elif choice == '8':
             question = input("Enter your question for the librarian: ")
             ask_librarian(member_id, question)
-        
-        elif choice == '10':
-            pay_fine(member_id)
-        
-        elif choice == '11':
-            print("Returning to the main menu...")
-            break  # Exit the member menu and return to the main menu
-        
+
         elif choice == '9':
             with conn:
                 cur = conn.cursor()
@@ -642,6 +675,40 @@ def member_menu(member_id):
                             print("-" * 40)
                 else:
                     print("\nYou have no outstanding fines.")
+        
+        elif choice == '10':
+            pay_fine(member_id)
+        
+        elif choice == '11':
+            # First, show the user which events they're registered for
+            with conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT e.EventID, e.Name, e.Date, e.Time 
+                    FROM Event e
+                    JOIN Event_Member em ON e.EventID = em.EventID
+                    WHERE em.MemberID = ?
+                    ORDER BY e.Date
+                """, (member_id,))
+                registered_events = cur.fetchall()
+                
+                if not registered_events:
+                    print("\nYou are not registered for any events.")
+                    continue
+                    
+                print("\nYour Registered Events:")
+                for event in registered_events:
+                    print(f"ID: {event[0]}, {event[1]} on {event[2]} at {event[3]}")
+            
+            event_id = safe_int_input("\nEnter the Event ID to cancel registration: ")
+            if event_id is not None:
+                cancel_event_registration(member_id, event_id)
+        
+        elif choice == '12':
+            print("Returning to the main menu...")
+            break
+        
+        
         
         else:
             handle_input_error("Invalid choice (must be 1-11)")
