@@ -206,24 +206,49 @@ def donate_item(member_id, title, type, genre=None, publication_date=None, locat
 def find_event(event_name):
     with conn:
         cur = conn.cursor()
-        cur.execute("SELECT EventID, Name, Date, Time, SocialRoomID FROM Event WHERE Name LIKE ?", (f'%{event_name}%',))
+        cur.execute("""
+            SELECT e.EventID, e.Name, e.Date, e.Time, sr.RoomName, 
+                   e.MaxCapacity, e.CurrentAttendees, e.Description, e.RecommendedAudience
+            FROM Event e
+            JOIN SocialRoom sr ON e.SocialRoomID = sr.SocialRoomID
+            WHERE e.Name LIKE ?
+        """, (f'%{event_name}%',))
         events = cur.fetchall()
         if events:
             for event in events:
-                print(f"ID: {event[0]}, Name: {event[1]}, Date: {event[2]}, Time: {event[3]}, Room ID: {event[4]}")
+                print(f"ID: {event[0]}, Name: {event[1]}")
+                print(f"Date: {event[2]}, Time: {event[3]}")
+                print(f"Location: {event[4]}")
+                print(f"Capacity: {event[5]}, Current Attendees: {event[6]} ({event[5] - event[6]} spots left)")
+                if event[7]: 
+                    print(f"Description: {event[7]}")
+                if event[8]: 
+                    print(f"Recommended for: {event[8]}")
+                print("-" * 40)
         else:
             print("No events found with that name.")
 
-# Function to register for an event with improved error handling
 def register_event(member_id, event_id):
     try:
         with conn:
             cur = conn.cursor()
             
             # Check if event exists
-            cur.execute("SELECT COUNT(*) FROM Event WHERE EventID = ?", (event_id,))
-            if cur.fetchone()[0] == 0:
+            cur.execute("SELECT Name, MaxCapacity, CurrentAttendees, Date FROM Event WHERE EventID = ?", (event_id,))
+            event_info = cur.fetchone()
+            if not event_info:
                 return handle_input_error(f"Event with ID {event_id} not found")
+            
+            event_name, max_capacity, current_attendees, event_date = event_info
+            
+            # Check if event is already at capacity
+            if current_attendees >= max_capacity:
+                return handle_input_error(f"Sorry, event '{event_name}' is already at full capacity ({max_capacity} attendees)")
+            
+            # Check if event date is in the past
+            event_datetime = datetime.strptime(event_date, '%Y-%m-%d')
+            if event_datetime < datetime.now():
+                return handle_input_error(f"Cannot register for event '{event_name}' as it has already occurred")
             
             # Check if member exists
             cur.execute("SELECT COUNT(*) FROM Member WHERE MemberID = ?", (member_id,))
@@ -235,10 +260,21 @@ def register_event(member_id, event_id):
             if cur.fetchone()[0] != 'Active':
                 return handle_input_error(f"Member {member_id} is inactive and cannot register for events")
             
+            # Check if member is already registered
+            cur.execute("SELECT COUNT(*) FROM Event_Member WHERE EventID = ? AND MemberID = ?", (event_id, member_id))
+            if cur.fetchone()[0] > 0:
+                return handle_input_error(f"You are already registered for event '{event_name}'")
+            
+            # Register for the event
             reg_date = datetime.now().strftime('%Y-%m-%d')
             cur.execute("INSERT INTO Event_Member (EventID, MemberID, RegistrationDate) VALUES (?, ?, ?)",
                         (event_id, member_id, reg_date))
-            print(f"\nSUCCESS: Registered successfully for Event {event_id}.")
+            
+            # Update the current attendees count
+            cur.execute("UPDATE Event SET CurrentAttendees = CurrentAttendees + 1 WHERE EventID = ?", (event_id,))
+            
+            print(f"\nSUCCESS: Registered successfully for Event '{event_name}'.")
+            print(f"This event now has {current_attendees + 1} out of {max_capacity} attendees.")
             return True
             
     except sqlite3.IntegrityError:

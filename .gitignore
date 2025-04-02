@@ -1,0 +1,6 @@
+# ignore db files
+*.db
+# ignore .ipynbs_checkpoints
+.ipynb_checkpoints
+# ignore .db-journal
+*.db-journal
