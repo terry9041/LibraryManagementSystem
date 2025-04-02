@@ -5,18 +5,16 @@ from datetime import datetime, timedelta
 conn = sqlite3.connect('library.db')
 print("Opened database successfully\n")
 
-# Secret admin code (in a real app, this would be hashed and stored securely)
+# Secret admin code, this would be hashed and stored securely in real-life application
 ADMIN_CODE = "LibraryAdmin123"
 
 # Error handling utility functions
 def handle_input_error(message):
-    """Handle non-critical input errors by displaying a message and returning to menu"""
     print(f"\nINPUT ERROR: {message}")
     input("Press Enter to return to menu...")
     return None
 
 def handle_critical_error(message):
-    """Handle critical errors by displaying a message and exiting the application"""
     print(f"\nCRITICAL ERROR: {message}")
     print("The application must exit.")
     input("Press Enter to exit...")
@@ -25,7 +23,6 @@ def handle_critical_error(message):
 
 # Function to safely get integer input
 def safe_int_input(prompt):
-    """Get integer input with validation, returning None if invalid"""
     try:
         return int(input(prompt))
     except ValueError:
@@ -37,7 +34,6 @@ def safe_int_input(prompt):
 def find_item(title):
     with conn:
         cur = conn.cursor()
-        # Updated query to include ReferenceOnly status
         cur.execute("""
             SELECT i.ItemID, i.Title, i.BorrowingStatus, i.Location, GROUP_CONCAT(a.FirstName || ' ' || a.LastName) as Authors, i.ReferenceOnly
             FROM Item i
@@ -143,7 +139,6 @@ def return_item(borrowing_id):
         handle_critical_error(f"Database error while returning item: {e}")
 
 def donate_item(member_id, title, type, genre=None, publication_date=None, location=None, isbn=None, reference_only=False):
-    """Donate an item with error handling"""
     try:
         with conn:
             cur = conn.cursor()
@@ -168,6 +163,19 @@ def donate_item(member_id, title, type, genre=None, publication_date=None, locat
                 valid_types_str = ", ".join(f"'{t}'" for t in valid_types)
                 return handle_input_error(f"Invalid item type. Type must be one of: {valid_types_str}")
             
+            # Check for existing ISBN before attempting insert
+            if isbn:
+                cur.execute("SELECT Title FROM Item WHERE ISBN = ?", (isbn,))
+                existing_item = cur.fetchone()
+                if existing_item:
+                    print(f"\nNOTICE: An item with ISBN {isbn} already exists in our system.")
+                    print(f"Existing title: {existing_item[0]}")
+                    confirm = input("Do you still want to donate this item? (yes/no): ").lower()
+                    if confirm != 'yes':
+                        print("Donation cancelled.")
+                        return False
+                    print("Proceeding with donation of duplicate ISBN item...")
+            
             # Insert the item with reference_only flag
             cur.execute("""
                 INSERT INTO Item (Title, Type, Genre, PublicationDate, Location, ISBN, ReferenceOnly) 
@@ -189,12 +197,6 @@ def donate_item(member_id, title, type, genre=None, publication_date=None, locat
         error_msg = str(e)
         if 'CHECK constraint failed' in error_msg:
             return handle_input_error(f"Invalid item information: {error_msg}")
-        elif 'UNIQUE constraint failed' in error_msg and 'ISBN' in error_msg:
-            # Item with same ISBN already exists but we're allowing it
-            # Instead of an error, we'll just notify the user
-            print(f"\nNOTICE: An item with ISBN {isbn} already exists in our system.")
-            print("Your donation has been recorded with this ISBN.")
-            return True
         else:
             return handle_input_error(f"Problem donating the item: {error_msg}")
     except sqlite3.Error as e:
@@ -214,7 +216,6 @@ def find_event(event_name):
 
 # Function to register for an event with improved error handling
 def register_event(member_id, event_id):
-    """Register for an event with error handling"""
     try:
         with conn:
             cur = conn.cursor()
@@ -247,7 +248,6 @@ def register_event(member_id, event_id):
 
 # Function to volunteer for an event with improved error handling
 def volunteer_event(member_id, event_id, role):
-    """Volunteer for an event with error handling"""
     try:
         with conn:
             cur = conn.cursor()
@@ -284,7 +284,6 @@ def volunteer_event(member_id, event_id, role):
 
 # Function to ask for help from a librarian with improved error handling
 def ask_librarian(member_id, question):
-    """Ask a librarian for help with error handling"""
     try:
         if not question or len(question.strip()) == 0:
             return handle_input_error("Question cannot be empty")
@@ -312,7 +311,6 @@ def ask_librarian(member_id, question):
         handle_critical_error(f"Database error while submitting question: {e}")
 
 def pay_fine(member_id):
-    """Pay the full fine amount for a member"""
     try:
         with conn:
             cur = conn.cursor()
@@ -334,7 +332,8 @@ def pay_fine(member_id):
                 print("Payment cancelled.")
                 return False
             
-            # Process the payment (in a real system, you'd integrate with a payment processor)
+            # We could implement some sort of payment integration, or this should only be
+            # accessible on the librarian side
             cur.execute("UPDATE Fine SET TotalFine = 0 WHERE MemberID = ?", (member_id,))
             
             print(f"\nSUCCESS: Payment of ${fine_amount:.2f} processed successfully.")
@@ -399,10 +398,6 @@ def main():
 
 # Admin login function with secure code verification
 def admin_login():
-    """
-    Handle admin login by verifying the admin code
-    Returns True if login successful, False otherwise
-    """
     print("\nAdmin Login")
     print("-" * 50)
     
@@ -429,7 +424,6 @@ def admin_login():
 
 # Function to display all records for admin view
 def display_all_records():
-    """Display all database tables and their records for admin view"""
     try:
         with conn:
             cur = conn.cursor()
@@ -544,8 +538,6 @@ def member_menu(member_id):
             borrowing_id = safe_int_input("Enter the Borrowing ID to return: ")
             if borrowing_id is not None:
                 return_item(borrowing_id)
-        
-        # In the member_menu function, update the donation section (choice '4')
         elif choice == '4':
             title = input("Enter the title of the item to donate: ")
             if not title.strip():
