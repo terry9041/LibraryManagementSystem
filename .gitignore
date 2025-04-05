@@ -6,4 +6,5 @@
 *.db-journal
 *.zip
 *.db
-*pdf
+*.pdf
+*.env

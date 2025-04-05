@@ -1,14 +1,24 @@
 import sqlite3
 from datetime import datetime, timedelta
-import bcrypt  # Add this import
+import bcrypt
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Connect to the database
 conn = sqlite3.connect('library.db')
 print("Opened database successfully\n")
 
-# Instead of storing plaintext password, store the hashed version
-# This would normally be loaded from a secure environment variable or config file
-ADMIN_HASH = bcrypt.hashpw("LibraryAdmin123".encode(), bcrypt.gensalt())
+# Get admin password from environment variable
+admin_password = os.getenv("ADMIN_PASSWORD")
+if not admin_password:
+    print("WARNING: Admin password not found in environment variables")
+    admin_password = "LibraryAdmin123"  # Fallback for development only
+
+# Hash the admin password once at startup
+ADMIN_HASH = bcrypt.hashpw(admin_password.encode(), bcrypt.gensalt())
 
 # Error handling utility functions
 def handle_input_error(message):
@@ -431,7 +441,6 @@ def pay_fine(member_id):
             
     except sqlite3.Error as e:
         handle_critical_error(f"Database error while processing payment: {e}")
-
 
 def main():
     while True:
