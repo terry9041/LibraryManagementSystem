@@ -4,3 +4,6 @@
 .ipynb_checkpoints
 # ignore .db-journal
 *.db-journal
+*.zip
+*.db
+*pdf

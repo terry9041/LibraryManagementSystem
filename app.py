@@ -1,12 +1,14 @@
 import sqlite3
 from datetime import datetime, timedelta
+import bcrypt  # Add this import
 
 # Connect to the database
 conn = sqlite3.connect('library.db')
 print("Opened database successfully\n")
 
-# Secret admin code, this would be hashed and stored securely in real-life application
-ADMIN_CODE = "LibraryAdmin123"
+# Instead of storing plaintext password, store the hashed version
+# This would normally be loaded from a secure environment variable or config file
+ADMIN_HASH = bcrypt.hashpw("LibraryAdmin123".encode(), bcrypt.gensalt())
 
 # Error handling utility functions
 def handle_input_error(message):
@@ -407,8 +409,20 @@ def pay_fine(member_id):
                 print("Payment cancelled.")
                 return False
             
-            # We could implement some sort of payment integration, or this should only be
-            # accessible on the librarian side
+            # Admin authentication required for payment processing
+            print("\nAdmin authentication required to process payment.")
+            admin_code = input("Enter admin code (or type 'cancel' to return): ")
+            
+            if admin_code.lower() == 'cancel':
+                print("Payment cancelled.")
+                return False
+                
+            # Use bcrypt to verify the admin code
+            if not bcrypt.checkpw(admin_code.encode(), ADMIN_HASH):
+                print("Invalid admin code. Payment could not be processed.")
+                return False
+            
+            # Process payment after successful admin authentication
             cur.execute("UPDATE Fine SET TotalFine = 0 WHERE MemberID = ?", (member_id,))
             
             print(f"\nSUCCESS: Payment of ${fine_amount:.2f} processed successfully.")
@@ -418,7 +432,7 @@ def pay_fine(member_id):
     except sqlite3.Error as e:
         handle_critical_error(f"Database error while processing payment: {e}")
 
-# Update the main function to use safe_int_input for robustness
+
 def main():
     while True:
         try:
@@ -471,7 +485,7 @@ def main():
         except Exception as e:
             handle_critical_error(f"Unexpected error: {e}")
 
-# Admin login function with secure code verification
+# Admin login function with secure bcrypt verification
 def admin_login():
     print("\nAdmin Login")
     print("-" * 50)
@@ -487,7 +501,8 @@ def admin_login():
             print("Admin login cancelled.")
             return False
             
-        if admin_code == ADMIN_CODE:
+        # Use bcrypt to check the password
+        if bcrypt.checkpw(admin_code.encode(), ADMIN_HASH):
             print("Admin login successful.")
             return True
     
@@ -582,7 +597,7 @@ def display_all_records():
     except sqlite3.Error as e:
         handle_critical_error(f"Database error while displaying records: {e}")
 
-# Also update the member_menu function to use safe_int_input for all numeric inputs
+
 def member_menu(member_id):
     while True:
         print("\nLibrary System Menu:")
